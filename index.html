@@ -475,6 +475,17 @@
       color: #0a7a5c;
     }
     .dark .surah-info span { background: rgba(10,122,92,0.3); color: #c9a84c; }
+    
+    /* ===== BISMILLAH ===== */
+    .bismillah {
+      font-size: 1.6rem;
+      text-align: center;
+      color: #0a7a5c;
+      margin: 12px 0 18px;
+      font-weight: 700;
+      letter-spacing: 2px;
+    }
+    .dark .bismillah { color: #c9a84c; }
   </style>
 </head>
 <body>
@@ -821,12 +832,20 @@
           const data = await res.json();
           if (data.code === 200) {
             const surah = data.data;
-            const ayahText = surah.ayahs.map((a, idx) => 
+            // بناء الآيات مع إضافة بسملة في بداية كل سورة ما عدا التوبة
+            let ayahText = '';
+            // إضافة البسملة لجميع السور ما عدا سورة التوبة (رقم 9)
+            if (surah.number !== 9) {
+              ayahText += `<div class="bismillah">بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ</div>`;
+            }
+            // إضافة الآيات مع أرقامها
+            ayahText += surah.ayahs.map((a, idx) => 
               `<span style="font-size:${fontSize}rem; display:inline-block; margin:2px 0;">
                 ${a.text}
                 <span class="ayah-number">${idx + 1}</span>
               </span>`
             ).join(' ');
+            
             const type = surah.revelationType === 'Meccan' ? 'مكية' : 'مدنية';
             $('surahContent').innerHTML = `
               <h3>${surah.name} (${surah.englishName})</h3>
@@ -849,16 +868,79 @@
       $('zoomOutBtn').addEventListener('click', () => { fontSize = Math.max(0.8, fontSize - 0.2); if (currentSurah) openSurah(currentSurah); });
       
       // ===== REAL PAGE NAVIGATION =====
+      // استخدام API للحصول على رقم الصفحة لكل سورة
       let currentPage = 1;
       let totalPages = 604;
+      
+      // محاولة جلب رقم الصفحة الحالية من API
+      async function getPageNumber(surahId, ayahIndex) {
+        try {
+          const res = await fetch(`https://api.alquran.cloud/v1/ayah/${surahId}:${ayahIndex}/editions/quran-uthmani`);
+          const data = await res.json();
+          if (data.code === 200 && data.data && data.data[0]) {
+            return data.data[0].page || 1;
+          }
+        } catch(e) {}
+        return 1;
+      }
+      
       $('prevPageBtn').addEventListener('click', () => {
-        if (currentPage > 1) { currentPage--; showToast(`📄 الصفحة ${currentPage}`); }
-        else showToast('أنت في الصفحة الأولى');
+        if (currentPage > 1) {
+          currentPage--;
+          showToast(`📄 الصفحة ${currentPage}`);
+          // محاولة تحميل الصفحة من API
+          fetchPageContent(currentPage);
+        } else {
+          showToast('أنت في الصفحة الأولى');
+        }
       });
+      
       $('nextPageBtn').addEventListener('click', () => {
-        if (currentPage < totalPages) { currentPage++; showToast(`📄 الصفحة ${currentPage}`); }
-        else showToast('أنت في الصفحة الأخيرة');
+        if (currentPage < totalPages) {
+          currentPage++;
+          showToast(`📄 الصفحة ${currentPage}`);
+          fetchPageContent(currentPage);
+        } else {
+          showToast('أنت في الصفحة الأخيرة');
+        }
       });
+      
+      // دالة لجلب محتوى صفحة معينة من API
+      async function fetchPageContent(pageNumber) {
+        try {
+          const res = await fetch(`https://api.alquran.cloud/v1/page/${pageNumber}/quran-uthmani`);
+          const data = await res.json();
+          if (data.code === 200) {
+            const pageData = data.data;
+            // عرض الآيات في الصفحة
+            let ayahText = '';
+            // إضافة بسملة إذا كانت الصفحة تحتوي على بداية سورة
+            if (pageData.ayahs && pageData.ayahs.length > 0) {
+              // التحقق إذا كانت الصفحة تبدأ بسورة جديدة
+              const firstAyah = pageData.ayahs[0];
+              if (firstAyah && firstAyah.numberInSurah === 1 && firstAyah.surah.number !== 9) {
+                ayahText += `<div class="bismillah">بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ</div>`;
+              }
+              ayahText += pageData.ayahs.map(a => 
+                `<span style="font-size:${fontSize}rem; display:inline-block; margin:2px 0;">
+                  ${a.text}
+                  <span class="ayah-number">${a.numberInSurah}</span>
+                </span>`
+              ).join(' ');
+              
+              const surahName = pageData.ayahs[0]?.surah?.name || 'القرآن';
+              $('surahContent').innerHTML = `
+                <h3>الصفحة ${pageNumber} - ${surahName}</h3>
+                <div style="margin-top:8px;">${ayahText}</div>
+              `;
+              $('surahViewer').classList.remove('hidden');
+              $('surahList').classList.add('hidden');
+            }
+          }
+        } catch (e) {
+          showToast('⚠️ خطأ في تحميل الصفحة');
+        }
+      }
 
       // ===== FAVORITES =====
       window.toggleFavorite = function(id) {
@@ -929,13 +1011,29 @@
       };
       function playAudio() {
         const url = getAudioUrl(currentSurahId);
-        audio.src = url;
-        audio.play().catch(() => showToast('⚠️ حدث خطأ في التشغيل، تأكد من الاتصال'));
-        isPlaying = true;
-        $('playAudio').textContent = '⏸';
-        const surah = surahsData.find(s => s.number === currentSurahId);
-        $('audioStatus').textContent = `🎵 تشغيل: ${surah ? surah.name : currentSurahId} - ${currentReciter.name}`;
-        saveLastListen();
+        // التحقق من وجود الرابط
+        fetch(url, { method: 'HEAD' })
+          .then(response => {
+            if (response.ok) {
+              audio.src = url;
+              return audio.play();
+            } else {
+              showToast('⚠️ الرابط غير متاح، حاول اختيار قارئ آخر');
+              return Promise.reject('File not found');
+            }
+          })
+          .then(() => {
+            isPlaying = true;
+            $('playAudio').textContent = '⏸';
+            const surah = surahsData.find(s => s.number === currentSurahId);
+            $('audioStatus').textContent = `🎵 تشغيل: ${surah ? surah.name : currentSurahId} - ${currentReciter.name}`;
+            saveLastListen();
+          })
+          .catch(() => {
+            showToast('⚠️ حدث خطأ في التشغيل، تأكد من الاتصال');
+            isPlaying = false;
+            $('playAudio').textContent = '▶';
+          });
       }
       $('playAudio').addEventListener('click', () => {
         if (isPlaying) { audio.pause(); isPlaying = false; $('playAudio').textContent = '▶'; }
@@ -950,11 +1048,20 @@
         else showToast('أنت في آخر سورة');
       });
       $('downloadAudio').addEventListener('click', () => {
-        const a = document.createElement('a');
-        a.href = getAudioUrl(currentSurahId);
-        a.download = `surah_${currentSurahId}.mp3`;
-        a.click();
-        showToast('⬇ جاري التحميل...');
+        const url = getAudioUrl(currentSurahId);
+        fetch(url, { method: 'HEAD' })
+          .then(response => {
+            if (response.ok) {
+              const a = document.createElement('a');
+              a.href = url;
+              a.download = `surah_${currentSurahId}.mp3`;
+              a.click();
+              showToast('⬇ جاري التحميل...');
+            } else {
+              showToast('⚠️ الملف غير متاح للتحميل');
+            }
+          })
+          .catch(() => showToast('⚠️ حدث خطأ في التحميل'));
       });
       audio.addEventListener('timeupdate', () => {
         const pct = audio.duration ? (audio.currentTime / audio.duration) * 100 : 0;
